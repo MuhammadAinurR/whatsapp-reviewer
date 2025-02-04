@@ -8,157 +8,208 @@ const qrcode = require('qrcode-terminal');
 dotenv.config();
 
 // ================ CONFIGURATIONS ================
-
-const INTERVIEW_CONFIG = {
-  timeoutMinutes: 30,
-  minScoreToPass: 6,
-  stages: ['initial', 'technical', 'hr']
-};
-
-const AGENT_CONFIG = {
-  recruiter: {
-    name: "Recruiter Sarah",
-    role: "HR Recruiter",
-    systemPrompt: `You are Sarah, a friendly and professional HR recruiter for Worldcoin.
-    Your goal is to make candidates comfortable while evaluating their potential.
-    Communicate in Bahasa Indonesia with a warm, encouraging tone.`
+/** @type {Record<string, any>} */
+const CONFIG = {
+  interview: {
+    timeoutMinutes: 30,
+    minScoreToPass: 6,
+    stages: ['initial', 'technical', 'hr'],
+    messages: {
+      noQuestions: "Baik, mari kita lanjutkan ke tahap berikutnya!",
+      askQuestions: "Ada yang ingin ditanyakan? Atau ketik 'LANJUT' untuk melanjutkan ke tahap berikutnya 😊"
+    }
   },
-  technicalExpert: {
-    name: "Tech Expert Budi",
-    role: "Technical Specialist",
-    systemPrompt: `You are Budi, a technical expert for Worldcoin operations.
-    Evaluate understanding of Worldcoin, World ID, and Orb technology.
-    Communicate clearly in Bahasa Indonesia.`
-  },
-  hrSpecialist: {
-    name: "CS Expert Nina",
-    role: "HR Specialist",
-    systemPrompt: `You are Nina, focusing on soft skills and cultural fit.
-    Evaluate communication skills and service orientation.
-    Maintain a professional yet friendly tone in Bahasa Indonesia.`
-  }
-};
-
-const INTERVIEW_STAGES = {
-  initial: {
-    questions: [
-      "Apakah Anda memiliki pengalaman sebelumnya sebagai sales promoter atau di bidang hospitality?",
-      "Apakah Anda bersedia bekerja dalam shift 12 jam?",
-      "Bagaimana Anda menangani situasi ketika harus menjelaskan konsep yang kompleks kepada pelanggan?"
-    ],
-    agent: 'recruiter'
-  },
-  technical: {
-    questions: [
-      "Apa yang Anda ketahui tentang Worldcoin dan tujuannya?",
-      "Bagaimana Anda akan menjelaskan konsep World ID kepada pengguna yang awam dengan teknologi?",
-      "Apa yang Anda ketahui tentang proses verifikasi menggunakan Orb?"
-    ],
-    agent: 'technicalExpert'
-  },
-  hr: {
-    questions: [
-      "Bagaimana Anda menangani situasi ketika ada pelanggan yang tidak sabar?",
-      "Ceritakan pengalaman Anda bekerja dalam tim dan bagaimana Anda berkontribusi?",
-      "Bagaimana Anda menjaga semangat dan energi positif selama shift kerja yang panjang?"
-    ],
-    agent: 'hrSpecialist'
-  }
-};
-
-// Add company profile configuration
-const COMPANY_PROFILE = {
-  industry: "Technology & Digital Identity Services",
-  headquarters: "South Tangerang, Banten, Indonesia",
-  overview: `Koru Indonesia is a technology-driven company specializing in digital identity verification and operational management. We collaborate with global technology projects to provide seamless onboarding experiences for users. Currently, we are partnering with the Worldcoin Project to facilitate user verification at designated activation sites across Indonesia.`,
-  mission: `We aim to revolutionize digital identity verification by delivering secure, efficient, and user-friendly solutions. Our commitment is to provide top-tier operational excellence while ensuring an inclusive and accessible experience for all users.`,
-  services: [
-    "Operational Management: We manage and oversee Worldcoin verification centers, ensuring smooth daily operations.",
-    "User Onboarding: We facilitate the identity verification process, helping users understand and participate in the Worldcoin ecosystem.",
-    "Team Development: We train and empower our team members to deliver high-quality customer service and technical support."
-  ],
-  benefits: [
-    "Competitive salary with KPI-based performance bonuses",
-    "A dynamic work environment with career growth opportunities",
-    "Hands-on experience with cutting-edge technology in digital identity verification",
-    "A friendly and professional team committed to excellence"
-  ],
-  locations: {
-    bintaro: {
-      name: "World: Pusat Verifikasi (Bintaro)",
-      address: "12 Rengas Raya Street, RT.05/RW.09, Rengas, East Ciputat, South Tangerang, Banten 15412, Indonesia",
-      maps: "https://maps.app.goo.gl/gNSEdv8nvALKCeEd8"
+  agents: {
+    recruiter: {
+      name: "Recruiter Sarah",
+      role: "HR Recruiter",
+      systemPrompt: `You are Sarah, a friendly and professional HR recruiter for Worldcoin.
+      Your goal is to make candidates comfortable while evaluating their potential.
+      Communicate in Bahasa Indonesia with a warm, encouraging tone.`
     },
-    gadingSerpong: {
-      name: "World: Pusat Verifikasi (Gading Serpong)",
-      address: "M9-10 Madison Grande, Boulevard Diponegoro Street, Gading, Serpong, Tangerang, Banten 15334, Indonesia",
-      maps: "https://maps.app.goo.gl/yourMapLink"
+    technicalExpert: {
+      name: "Tech Expert Budi",
+      role: "Technical Specialist",
+      systemPrompt: `You are Budi, a technical expert for Worldcoin operations.
+      Evaluate understanding of Worldcoin, World ID, and Orb technology.
+      Communicate clearly in Bahasa Indonesia.`
+    },
+    hrSpecialist: {
+      name: "CS Expert Nina",
+      role: "HR Specialist",
+      systemPrompt: `You are Nina, focusing on soft skills and cultural fit.
+      Evaluate communication skills and service orientation.
+      Maintain a professional yet friendly tone in Bahasa Indonesia.`
+    }
+  },
+  stages: {
+    initial: {
+      questions: [
+        "Apakah Anda memiliki pengalaman sebelumnya sebagai sales promoter atau di bidang hospitality?",
+        "Apakah Anda bersedia bekerja dalam shift 12 jam?",
+        "Bagaimana Anda menangani situasi ketika harus menjelaskan konsep yang kompleks kepada pelanggan?"
+      ],
+      agent: 'recruiter'
+    },
+    technical: {
+      questions: [
+        "Apa yang Anda ketahui tentang Worldcoin dan tujuannya?",
+        "Bagaimana Anda akan menjelaskan konsep World ID kepada pengguna yang awam dengan teknologi?",
+        "Apa yang Anda ketahui tentang proses verifikasi menggunakan Orb?"
+      ],
+      agent: 'technicalExpert'
+    },
+    hr: {
+      questions: [
+        "Bagaimana Anda menangani situasi ketika ada pelanggan yang tidak sabar?",
+        "Ceritakan pengalaman Anda bekerja dalam tim dan bagaimana Anda berkontribusi?",
+        "Bagaimana Anda menjaga semangat dan energi positif selama shift kerja yang panjang?"
+      ],
+      agent: 'hrSpecialist'
+    }
+  },
+  company: {
+    industry: "Technology & Digital Identity Services",
+    headquarters: "South Tangerang, Banten, Indonesia",
+    overview: `Koru Indonesia is a technology-driven company specializing in digital identity verification and operational management. We collaborate with global technology projects to provide seamless onboarding experiences for users. Currently, we are partnering with the Worldcoin Project to facilitate user verification at designated activation sites across Indonesia.`,
+    mission: `We aim to revolutionize digital identity verification by delivering secure, efficient, and user-friendly solutions. Our commitment is to provide top-tier operational excellence while ensuring an inclusive and accessible experience for all users.`,
+    services: [
+      "Operational Management: We manage and oversee Worldcoin verification centers, ensuring smooth daily operations.",
+      "User Onboarding: We facilitate the identity verification process, helping users understand and participate in the Worldcoin ecosystem.",
+      "Team Development: We train and empower our team members to deliver high-quality customer service and technical support."
+    ],
+    benefits: [
+      "Competitive salary with KPI-based performance bonuses",
+      "A dynamic work environment with career growth opportunities",
+      "Hands-on experience with cutting-edge technology in digital identity verification",
+      "A friendly and professional team committed to excellence"
+    ],
+    locations: {
+      bintaro: {
+        name: "World: Pusat Verifikasi (Bintaro)",
+        address: "12 Rengas Raya Street, RT.05/RW.09, Rengas, East Ciputat, South Tangerang, Banten 15412, Indonesia",
+        maps: "https://maps.app.goo.gl/gNSEdv8nvALKCeEd8"
+      },
+      gadingSerpong: {
+        name: "World: Pusat Verifikasi (Gading Serpong)",
+        address: "M9-10 Madison Grande, Boulevard Diponegoro Street, Gading, Serpong, Tangerang, Banten 15334, Indonesia",
+        maps: "https://maps.app.goo.gl/yourMapLink"
+      }
     }
   }
 };
 
-// ================ AI SERVICE ================
+// ================ SERVICES ================
 
-class AIService {
+class BaseService {
   constructor() {
-    this.groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
-    this.cache = new Map(); // Add response caching
+    this.handleError = this.handleError.bind(this);
   }
 
+  /**
+   * @param {Error} error 
+   * @param {string} context
+   * @returns {Error}
+   */
+  handleError(error, context) {
+    console.error(`${context}:`, error);
+    return new Error(`Error in ${context}: ${error.message}`);
+  }
+}
+
+class AIService extends BaseService {
+  constructor() {
+    super();
+    this.groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+    this.cache = new Map();
+  }
+
+  /**
+   * @param {string} prompt
+   * @param {string} systemPrompt
+   * @returns {Promise<string>}
+   */
   async generateResponse(prompt, systemPrompt) {
     try {
-      // Create cache key
       const cacheKey = `${prompt}_${systemPrompt}`;
-      
-      // Check cache first
       if (this.cache.has(cacheKey)) {
         return this.cache.get(cacheKey);
       }
 
       const completion = await this.groq.chat.completions.create({
         messages: [
-          { role: "system", content: systemPrompt },
+          { 
+            role: "system", 
+            content: `${systemPrompt}
+            Important: Never include translations or English text in parentheses.
+            Respond naturally in Bahasa Indonesia only.` 
+          },
           { role: "user", content: prompt }
         ],
         model: "mixtral-8x7b-32768",
         temperature: 0.7,
-        max_tokens: 512, // Reduced from 1024 for faster response
-        stream: false    // Ensure streaming is off for faster complete response
+        max_tokens: 512,
+        stream: false
       });
 
       const response = completion.choices[0]?.message?.content;
-      
-      // Cache the response
       this.cache.set(cacheKey, response);
       
       return response;
     } catch (error) {
-      console.error("AI Service Error:", error);
-      throw new Error('Failed to generate AI response');
+      throw this.handleError(error, 'AI Service');
     }
   }
 }
 
-// ================ INTERVIEW SERVICE ================
+class InterviewSession {
+  constructor(userId) {
+    this.userId = userId;
+    this.stage = 'initial';
+    this.currentQuestion = 0;
+    this.scores = [];
+    this.startTime = Date.now();
+    this.lastInteraction = Date.now();
+    this.followUpPending = false;
+    this.inQASection = false;
+  }
 
-// First, define the INTERVIEW_MESSAGES constant at the top level
-const INTERVIEW_MESSAGES = {
-  collecting: "💭 Sedang mengumpulkan pertanyaan Anda... (20 detik)",
-  reminder: "⏳ 10 detik lagi sebelum saya menjawab semua pertanyaan...",
-  processing: "✨ Sedang menyiapkan jawaban untuk Anda..."
-};
+  updateLastInteraction() {
+    this.lastInteraction = Date.now();
+  }
 
-class InterviewService {
+  isExpired() {
+    const timeoutMs = CONFIG.interview.timeoutMinutes * 60 * 1000;
+    return Date.now() - this.lastInteraction > timeoutMs;
+  }
+
+  calculateScore() {
+    const sum = this.scores.reduce((acc, score) => acc + score.score, 0);
+    return sum / this.scores.length;
+  }
+}
+
+class InterviewService extends BaseService {
   constructor() {
+    super();
     this.sessions = new Map();
     this.questionCollector = new Map();
     this.collectorTimers = new Map();
     this.aiService = new AIService();
   }
 
+  /**
+   * @param {string} userId
+   * @returns {Promise<string>}
+   */
   async startInterview(userId) {
-    const session = this.createSession(userId);
-    return await this.generateWelcomeMessage(session);
+    try {
+      const session = new InterviewSession(userId);
+      this.sessions.set(userId, session);
+      return this.generateWelcomeMessage();
+    } catch (error) {
+      throw this.handleError(error, 'Start Interview');
+    }
   }
 
   async handleResponse(userId, message) {
@@ -187,18 +238,24 @@ class InterviewService {
     return session;
   }
 
+  /**
+   * @private
+   * @param {InterviewSession} session
+   * @param {string} message
+   * @returns {Promise<string>}
+   */
   async processResponse(session, message) {
     try {
+      session.updateLastInteraction();
+
       if (session.inQASection) {
         return await this.collectAndAnswerQuestions(session, message);
       }
 
-      // Regular interview flow
       if (message.toLowerCase() === 'siap' && session.currentQuestion === 0) {
         return await this.getNextQuestion(session);
       }
 
-      // Handle follow-up question if it exists
       if (session.followUpPending) {
         const followUpEvaluation = await this.evaluateResponse(session, message, true);
         session.scores.push(followUpEvaluation);
@@ -212,28 +269,24 @@ class InterviewService {
         return await this.getNextQuestion(session);
       }
 
-      // Handle main question
       const evaluation = await this.evaluateResponse(session, message);
       session.scores.push(evaluation);
 
-      // Generate follow-up question based on the response
       const followUpQuestion = await this.generateFollowUpQuestion(session, message);
       session.followUpPending = true;
       
-      // When sending the response, ensure it's clean of quotes
       const response = followUpQuestion.replace(/["'"]/g, '');
       
       return response;
 
     } catch (error) {
-      console.error("Process Response Error:", error);
-      return "Maaf, terjadi kesalahan. Silakan coba lagi.";
+      throw this.handleError(error, 'Process Response');
     }
   }
 
   async generateFollowUpQuestion(session, response) {
-    const currentStage = INTERVIEW_STAGES[session.stage];
-    const agent = AGENT_CONFIG[currentStage.agent];
+    const currentStage = CONFIG.stages[session.stage];
+    const agent = CONFIG.agents[currentStage.agent];
     const mainQuestion = currentStage.questions[session.currentQuestion];
 
     const prompt = `You are having a natural conversation in Bahasa Indonesia with a job candidate. Based on their response: "${response}" to the question "${mainQuestion}", ask a natural follow-up question.
@@ -253,13 +306,12 @@ Just write the follow-up question directly, nothing else.`;
       agent.systemPrompt
     );
 
-    // Remove any quotes that might be in the response
     return followUpQuestion.replace(/["'"]/g, '');
   }
 
   async evaluateResponse(session, message, isFollowUp = false) {
-    const currentStage = INTERVIEW_STAGES[session.stage];
-    const agent = AGENT_CONFIG[currentStage.agent];
+    const currentStage = CONFIG.stages[session.stage];
+    const agent = CONFIG.agents[currentStage.agent];
     const question = isFollowUp ? 
       "Follow-up question" : 
       currentStage.questions[session.currentQuestion];
@@ -277,12 +329,10 @@ Just write the follow-up question directly, nothing else.`;
   }
 
   async handleStageTransition(session) {
-    const currentStageIndex = INTERVIEW_CONFIG.stages.indexOf(session.stage);
+    const currentStageIndex = CONFIG.interview.stages.indexOf(session.stage);
     
-    // Add Q&A section between stages
-    if (currentStageIndex < INTERVIEW_CONFIG.stages.length - 1) {
+    if (currentStageIndex < CONFIG.interview.stages.length - 1) {
       session.inQASection = true;
-      // Clear any existing questions for this user
       this.questionCollector.set(session.userId, []);
       
       return `Sebelum kita lanjut ke tahap berikutnya, apakah ada yang ingin Anda tanyakan? 🤔
@@ -296,20 +346,19 @@ Anda bisa bertanya tentang:
 Silakan ajukan pertanyaan Anda, atau ketik "LANJUT" jika tidak ada pertanyaan.`;
     }
     
-    if (currentStageIndex === INTERVIEW_CONFIG.stages.length - 1) {
+    if (currentStageIndex === CONFIG.interview.stages.length - 1) {
       return await this.concludeInterview(session);
     }
 
-    session.stage = INTERVIEW_CONFIG.stages[currentStageIndex + 1];
+    session.stage = CONFIG.interview.stages[currentStageIndex + 1];
     session.currentQuestion = 0;
     
     return `Bagus! Mari kita lanjut ke tahap ${session.stage}.
-            ${INTERVIEW_STAGES[session.stage].questions[0]}`;
+            ${CONFIG.stages[session.stage].questions[0]}`;
   }
 
   async handleQASection(session) {
     session.inQASection = true;
-    // Clear any existing questions for this user
     this.questionCollector.set(session.userId, []);
     
     return `Sebelum kita lanjut ke tahap berikutnya, apakah ada yang ingin Anda tanyakan? 🤔
@@ -327,28 +376,24 @@ Silakan ajukan pertanyaan Anda, atau ketik "LANJUT" jika tidak ada pertanyaan.
   async collectAndAnswerQuestions(session, msg) {
     const userId = session.userId;
 
-    // If it's "LANJUT", proceed to next stage
     if (msg.toLowerCase() === 'lanjut') {
       this.clearQuestionCollection(userId);
       session.inQASection = false;
-      session.stage = INTERVIEW_CONFIG.stages[
-        INTERVIEW_CONFIG.stages.indexOf(session.stage) + 1
+      session.stage = CONFIG.interview.stages[
+        CONFIG.interview.stages.indexOf(session.stage) + 1
       ];
       session.currentQuestion = 0;
-      return INTERVIEW_STAGES[session.stage].questions[0];
+      return CONFIG.stages[session.stage].questions[0];
     }
 
-    // Collect the question
     let questions = this.questionCollector.get(userId) || [];
     questions.push(msg);
     this.questionCollector.set(userId, questions);
 
-    // Clear existing timer if any
     if (this.collectorTimers.has(userId)) {
       clearTimeout(this.collectorTimers.get(userId));
     }
 
-    // Set new timer for response
     const timer = setTimeout(async () => {
       const collectedQuestions = this.questionCollector.get(userId);
       if (collectedQuestions && collectedQuestions.length > 0) {
@@ -356,10 +401,10 @@ Silakan ajukan pertanyaan Anda, atau ketik "LANJUT" jika tidak ada pertanyaan.
         await this.getWhatsAppClient().sendMessage(userId, response);
         this.clearQuestionCollection(userId);
       }
-    }, 20000); // 20 seconds
+    }, 20000);
 
     this.collectorTimers.set(userId, timer);
-    return null; // Return null to prevent immediate response
+    return null;
   }
 
   async generateBatchAnswers(questions) {
@@ -372,7 +417,7 @@ Questions:
 ${questionsText}
 
 Company Information:
-${JSON.stringify(COMPANY_PROFILE)}
+${JSON.stringify(CONFIG.company)}
 
 Please format your response in Bahasa Indonesia:
 1. Start with a warm, natural greeting
@@ -385,7 +430,7 @@ Important: Make it sound like a natural conversation, not a formal response.`;
 
       const response = await this.aiService.generateResponse(
         prompt,
-        AGENT_CONFIG.recruiter.systemPrompt
+        CONFIG.agents.recruiter.systemPrompt
       );
 
       return `${response}
@@ -398,8 +443,7 @@ Ketik *LANJUT* untuk melanjutkan interview, atau tanyakan hal lain yang ingin ka
   }
 
   calculateRemainingTime() {
-    // Implementation of remaining time calculation
-    return 15; // placeholder
+    return 15;
   }
 
   clearQuestionCollection(userId) {
@@ -419,7 +463,7 @@ Ketik *LANJUT* untuk melanjutkan interview, atau tanyakan hal lain yang ingin ka
     return this.generateFinalMessage(averageScore, result);
   }
 
-  async generateWelcomeMessage(session) {
+  async generateWelcomeMessage() {
     const welcomeMessage = `Selamat datang di proses interview Worldcoin! 👋
 
 *Posisi: Operation Staff - Worldcoin Project*
@@ -446,12 +490,11 @@ Ketik *SIAP* untuk memulai interview.`;
   }
 
   async getNextQuestion(session) {
-    const currentStage = INTERVIEW_STAGES[session.stage];
+    const currentStage = CONFIG.stages[session.stage];
     return currentStage.questions[session.currentQuestion];
   }
 
   parseEvaluation(evaluation) {
-    // Simplified parsing for faster processing
     const scoreMatch = evaluation.match(/\d+/);
     const score = scoreMatch ? parseInt(scoreMatch[0]) : 5;
     
@@ -461,15 +504,13 @@ Ketik *SIAP* untuk memulai interview.`;
     };
   }
 
-  // ================ HELPER METHODS ================
-
   isSessionExpired(session) {
-    const timeoutMs = INTERVIEW_CONFIG.timeoutMinutes * 60 * 1000;
+    const timeoutMs = CONFIG.interview.timeoutMinutes * 60 * 1000;
     return Date.now() - session.lastInteraction > timeoutMs;
   }
 
   isStageComplete(session) {
-    return session.currentQuestion >= INTERVIEW_STAGES[session.stage].questions.length - 1;
+    return session.currentQuestion >= CONFIG.stages[session.stage].questions.length - 1;
   }
 
   calculateFinalScore(session) {
@@ -491,7 +532,7 @@ Hasil evaluasi Anda:
 📊 Nilai Rata-rata: ${score.toFixed(1)}/10
 ✨ Hasil: ${result}
 
-${score >= INTERVIEW_CONFIG.minScoreToPass ? 
+${score >= CONFIG.interview.minScoreToPass ? 
   "Selamat! Tim HR kami akan menghubungi Anda dalam 2-3 hari kerja." : 
   "Terima kasih atas partisipasi Anda. Sayangnya, kualifikasi belum sesuai."}
 
@@ -507,7 +548,7 @@ Semoga sukses! 🌟`;
   }
 
   getWhatsAppClient() {
-    return client; // Assuming 'client' is your WhatsApp client instance
+    return client;
   }
 }
 
@@ -534,7 +575,7 @@ client.on('ready', () => {
 });
 
 client.on('message', async msg => {
-  const TIMEOUT = 30000; // 30 seconds timeout
+  const TIMEOUT = 30000;
   
   try {
     const timeoutPromise = new Promise((_, reject) => {
