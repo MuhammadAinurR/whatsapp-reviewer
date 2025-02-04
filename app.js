@@ -141,12 +141,19 @@ class AIService {
 
 // ================ INTERVIEW SERVICE ================
 
+// First, define the INTERVIEW_MESSAGES constant at the top level
+const INTERVIEW_MESSAGES = {
+  collecting: "💭 Sedang mengumpulkan pertanyaan Anda... (20 detik)",
+  reminder: "⏳ 10 detik lagi sebelum saya menjawab semua pertanyaan...",
+  processing: "✨ Sedang menyiapkan jawaban untuk Anda..."
+};
+
 class InterviewService {
   constructor() {
     this.sessions = new Map();
+    this.questionCollector = new Map();
+    this.collectorTimers = new Map();
     this.aiService = new AIService();
-    this.questionCollector = new Map(); // Store questions for each user
-    this.collectorTimers = new Map();   // Store timers for each user
   }
 
   async startInterview(userId) {
@@ -173,7 +180,8 @@ class InterviewService {
       currentQuestion: 0,
       scores: [],
       startTime: Date.now(),
-      lastInteraction: Date.now()
+      lastInteraction: Date.now(),
+      followUpPending: false
     };
     this.sessions.set(userId, session);
     return session;
@@ -190,15 +198,32 @@ class InterviewService {
         return await this.getNextQuestion(session);
       }
 
+      // Handle follow-up question if it exists
+      if (session.followUpPending) {
+        const followUpEvaluation = await this.evaluateResponse(session, message, true);
+        session.scores.push(followUpEvaluation);
+        session.followUpPending = false;
+        
+        if (this.isStageComplete(session)) {
+          return await this.handleStageTransition(session);
+        }
+        
+        session.currentQuestion++;
+        return await this.getNextQuestion(session);
+      }
+
+      // Handle main question
       const evaluation = await this.evaluateResponse(session, message);
       session.scores.push(evaluation);
 
-      if (this.isStageComplete(session)) {
-        return await this.handleStageTransition(session);
-      }
-
-      session.currentQuestion++;
-      return await this.getNextQuestion(session);
+      // Generate follow-up question based on the response
+      const followUpQuestion = await this.generateFollowUpQuestion(session, message);
+      session.followUpPending = true;
+      
+      // When sending the response, ensure it's clean of quotes
+      const response = followUpQuestion.replace(/["'"]/g, '');
+      
+      return response;
 
     } catch (error) {
       console.error("Process Response Error:", error);
@@ -206,30 +231,45 @@ class InterviewService {
     }
   }
 
-  async _processResponse(session, message) {
-    if (message.toLowerCase() === 'siap' && session.currentQuestion === 0) {
-      return await this.getNextQuestion(session);
-    }
-
-    const evaluation = await this.evaluateResponse(session, message);
-    session.scores.push(evaluation);
-
-    if (this.isStageComplete(session)) {
-      return await this.handleStageTransition(session);
-    }
-
-    session.currentQuestion++;
-    return await this.getNextQuestion(session);
-  }
-
-  async evaluateResponse(session, message) {
+  async generateFollowUpQuestion(session, response) {
     const currentStage = INTERVIEW_STAGES[session.stage];
     const agent = AGENT_CONFIG[currentStage.agent];
-    const question = currentStage.questions[session.currentQuestion];
+    const mainQuestion = currentStage.questions[session.currentQuestion];
 
-    // Optimize prompt to be more concise
+    const prompt = `You are having a natural conversation in Bahasa Indonesia with a job candidate. Based on their response: "${response}" to the question "${mainQuestion}", ask a natural follow-up question.
+
+Rules:
+1. Respond as if you're having a casual conversation
+2. No quotation marks
+3. No translations
+4. No meta-text or explanations
+5. Keep it brief and friendly
+6. Use casual Indonesian conversational style
+
+Just write the follow-up question directly, nothing else.`;
+
+    const followUpQuestion = await this.aiService.generateResponse(
+      prompt,
+      agent.systemPrompt
+    );
+
+    // Remove any quotes that might be in the response
+    return followUpQuestion.replace(/["'"]/g, '');
+  }
+
+  async evaluateResponse(session, message, isFollowUp = false) {
+    const currentStage = INTERVIEW_STAGES[session.stage];
+    const agent = AGENT_CONFIG[currentStage.agent];
+    const question = isFollowUp ? 
+      "Follow-up question" : 
+      currentStage.questions[session.currentQuestion];
+
+    const prompt = isFollowUp ?
+      `This is a follow-up response. Rate 1-10 & give brief feedback on how well they elaborated their previous answer: "${message}"` :
+      `Q: ${question}\nA: "${message}"\nRate 1-10 & brief feedback.`;
+
     const evaluation = await this.aiService.generateResponse(
-      `Q: ${question}\nA: "${message}"\nRate 1-10 & brief feedback.`,
+      prompt,
       agent.systemPrompt
     );
 
@@ -241,7 +281,19 @@ class InterviewService {
     
     // Add Q&A section between stages
     if (currentStageIndex < INTERVIEW_CONFIG.stages.length - 1) {
-      await this.handleQASection(session);
+      session.inQASection = true;
+      // Clear any existing questions for this user
+      this.questionCollector.set(session.userId, []);
+      
+      return `Sebelum kita lanjut ke tahap berikutnya, apakah ada yang ingin Anda tanyakan? 🤔
+
+Anda bisa bertanya tentang:
+• Perusahaan dan budaya kerja
+• Detail pekerjaan dan tanggung jawab
+• Benefit dan pengembangan karir
+• Lokasi dan jadwal kerja
+
+Silakan ajukan pertanyaan Anda, atau ketik "LANJUT" jika tidak ada pertanyaan.`;
     }
     
     if (currentStageIndex === INTERVIEW_CONFIG.stages.length - 1) {
@@ -274,8 +326,8 @@ Silakan ajukan pertanyaan Anda, atau ketik "LANJUT" jika tidak ada pertanyaan.
 
   async collectAndAnswerQuestions(session, msg) {
     const userId = session.userId;
-    
-    // If it's "LANJUT", clear collection and proceed
+
+    // If it's "LANJUT", proceed to next stage
     if (msg.toLowerCase() === 'lanjut') {
       this.clearQuestionCollection(userId);
       session.inQASection = false;
@@ -296,31 +348,25 @@ Silakan ajukan pertanyaan Anda, atau ketik "LANJUT" jika tidak ada pertanyaan.
       clearTimeout(this.collectorTimers.get(userId));
     }
 
-    // Set new timer
+    // Set new timer for response
     const timer = setTimeout(async () => {
       const collectedQuestions = this.questionCollector.get(userId);
       if (collectedQuestions && collectedQuestions.length > 0) {
         const response = await this.generateBatchAnswers(collectedQuestions);
-        // Send response through WhatsApp
-        const client = this.getWhatsAppClient(); // You'll need to implement this
-        await client.sendMessage(userId, response);
-        
-        // Clear the collection
+        await this.getWhatsAppClient().sendMessage(userId, response);
         this.clearQuestionCollection(userId);
       }
     }, 20000); // 20 seconds
 
     this.collectorTimers.set(userId, timer);
-
-    // Return null to prevent immediate response
-    return null;
+    return null; // Return null to prevent immediate response
   }
 
   async generateBatchAnswers(questions) {
     try {
       const questionsText = questions.map((q, i) => `${i + 1}. ${q}`).join('\n');
       
-      const prompt = `As a friendly HR representative, answer these candidate questions about our company:
+      const prompt = `As a friendly HR representative having a natural conversation, answer these candidate questions about our company:
 
 Questions:
 ${questionsText}
@@ -328,24 +374,32 @@ ${questionsText}
 Company Information:
 ${JSON.stringify(COMPANY_PROFILE)}
 
-Please format your response in Bahasa Indonesia with:
-1. A brief acknowledgment of their questions
-2. Numbered answers corresponding to each question
-3. For salary/personal questions, respond politely that HR will discuss in detail later
-4. End with an invitation for more questions
+Please format your response in Bahasa Indonesia:
+1. Start with a warm, natural greeting
+2. Answer each question conversationally
+3. For salary/personal questions, politely defer to HR discussion
+4. Keep the tone friendly and casual, like chatting with a friend
+5. End naturally, inviting more questions or to continue
 
-Keep the tone friendly and professional.`;
+Important: Make it sound like a natural conversation, not a formal response.`;
 
       const response = await this.aiService.generateResponse(
         prompt,
         AGENT_CONFIG.recruiter.systemPrompt
       );
 
-      return response + "\n\nAda pertanyaan lain? Atau ketik *LANJUT* untuk melanjutkan interview.";
+      return `${response}
+
+Ketik *LANJUT* untuk melanjutkan interview, atau tanyakan hal lain yang ingin kamu ketahui 😊`;
     } catch (error) {
       console.error("Batch QA Response Error:", error);
-      return "Maaf, terjadi kesalahan. Mari kita lanjutkan dengan interview. Ketik *LANJUT*.";
+      return "Mohon maaf, ada kendala teknis. Ketik *LANJUT* untuk melanjutkan interview.";
     }
+  }
+
+  calculateRemainingTime() {
+    // Implementation of remaining time calculation
+    return 15; // placeholder
   }
 
   clearQuestionCollection(userId) {
