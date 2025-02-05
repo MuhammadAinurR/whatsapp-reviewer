@@ -3,6 +3,8 @@ const { Client, LocalAuth } = require("whatsapp-web.js");
 const { Groq } = require("groq-sdk");
 const dotenv = require('dotenv');
 const qrcode = require('qrcode-terminal');
+const { google } = require('googleapis');
+const { OAuth2 } = google.auth;
 
 // Load environment variables
 dotenv.config();
@@ -12,7 +14,7 @@ dotenv.config();
 const CONFIG = {
   interview: {
     timeoutMinutes: 30,
-    minScoreToPass: 6,
+    minScoreToPass: 0, // this is minimum score to pass the interview
     stages: ['initial', 'technical', 'hr'],
     messages: {
       noQuestions: "Baik, mari kita lanjutkan ke tahap berikutnya!",
@@ -162,16 +164,113 @@ class AIService extends BaseService {
   }
 }
 
+class CalendarService extends BaseService {
+  constructor() {
+    super();
+    // Check if required env variables exist
+    if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET || !process.env.GOOGLE_REFRESH_TOKEN) {
+      console.warn('Google Calendar credentials not found, calendar features will be disabled');
+      this.enabled = false;
+      return;
+    }
+
+    this.enabled = true;
+    this.auth = new OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      'https://developers.google.com/oauthplayground'  // This should match your authorized redirect URI
+    );
+    
+    this.auth.setCredentials({
+      refresh_token: process.env.GOOGLE_REFRESH_TOKEN
+    });
+    
+    this.calendar = google.calendar({ 
+      version: 'v3', 
+      auth: this.auth 
+    });
+  }
+
+  /**
+   * @param {string} candidateEmail
+   * @param {string} candidateName
+   * @returns {Promise<string>}
+   */
+  async scheduleInterview(candidateEmail, candidateName) {
+    try {
+      // If calendar service is not enabled, return null
+      if (!this.enabled) {
+        throw new Error('Calendar service is not configured');
+      }
+
+      const interviewDate = this.getNextAvailableSlot();
+      
+      const event = {
+        summary: `HR Interview - ${candidateName}`,
+        description: 'Follow-up interview with HR team',
+        start: {
+          dateTime: interviewDate,
+          timeZone: 'Asia/Jakarta',
+        },
+        end: {
+          dateTime: new Date(interviewDate.getTime() + 60 * 60 * 1000),
+          timeZone: 'Asia/Jakarta',
+        },
+        attendees: [
+          { email: candidateEmail },
+          { email: process.env.HR_EMAIL }
+        ],
+        conferenceData: {
+          createRequest: {
+            requestId: `interview-${Date.now()}`,
+            conferenceSolutionKey: { type: 'hangoutsMeet' }
+          }
+        }
+      };
+
+      const response = await this.calendar.events.insert({
+        calendarId: 'primary',
+        resource: event,
+        conferenceDataVersion: 1,
+        sendUpdates: 'all'
+      });
+
+      return response.data.htmlLink;
+    } catch (error) {
+      throw this.handleError(error, 'Calendar Service');
+    }
+  }
+
+  /**
+   * @private
+   * @returns {Date}
+   */
+  getNextAvailableSlot() {
+    const date = new Date();
+    date.setDate(date.getDate() + 1); // Next day
+    date.setHours(10, 0, 0, 0); // 10 AM
+    
+    // Ensure it's a business day
+    while (date.getDay() === 0 || date.getDay() === 6) {
+      date.setDate(date.getDate() + 1);
+    }
+    
+    return date;
+  }
+}
+
 class InterviewSession {
   constructor(userId) {
     this.userId = userId;
-    this.stage = 'initial';
+    this.stage = 'initial';  // Changed from 'registration' to 'initial'
     this.currentQuestion = 0;
     this.scores = [];
     this.startTime = Date.now();
     this.lastInteraction = Date.now();
     this.followUpPending = false;
     this.inQASection = false;
+    this.candidateEmail = null;
+    this.candidateName = null;
   }
 
   updateLastInteraction() {
@@ -182,11 +281,6 @@ class InterviewSession {
     const timeoutMs = CONFIG.interview.timeoutMinutes * 60 * 1000;
     return Date.now() - this.lastInteraction > timeoutMs;
   }
-
-  calculateScore() {
-    const sum = this.scores.reduce((acc, score) => acc + score.score, 0);
-    return sum / this.scores.length;
-  }
 }
 
 class InterviewService extends BaseService {
@@ -196,6 +290,7 @@ class InterviewService extends BaseService {
     this.questionCollector = new Map();
     this.collectorTimers = new Map();
     this.aiService = new AIService();
+    this.calendarService = new CalendarService();
   }
 
   /**
@@ -206,7 +301,9 @@ class InterviewService extends BaseService {
     try {
       const session = new InterviewSession(userId);
       this.sessions.set(userId, session);
-      return this.generateWelcomeMessage();
+      return `Selamat datang di proses interview Worldcoin! 👋
+
+Sebelum kita mulai, mohon berikan alamat email Anda untuk keperluan komunikasi lebih lanjut:`;
     } catch (error) {
       throw this.handleError(error, 'Start Interview');
     }
@@ -248,25 +345,41 @@ class InterviewService extends BaseService {
     try {
       session.updateLastInteraction();
 
-      if (session.inQASection) {
-        return await this.collectAndAnswerQuestions(session, message);
+      // Registration flow
+      if (!session.candidateEmail) {
+        if (this.isValidEmail(message)) {
+          session.candidateEmail = message;
+          return "Terima kasih. Mohon berikan nama lengkap Anda:";
+        } else {
+          return "Mohon masukkan alamat email yang valid (contoh: nama@email.com)";
+        }
+      }
+      
+      if (!session.candidateName) {
+        session.candidateName = message;
+        session.stage = 'initial';
+        return CONFIG.stages.initial.questions[0];
       }
 
-      if (message.toLowerCase() === 'siap' && session.currentQuestion === 0) {
-        return await this.getNextQuestion(session);
-      }
-
+      // Interview flow
       if (session.followUpPending) {
-        const followUpEvaluation = await this.evaluateResponse(session, message, true);
-        session.scores.push(followUpEvaluation);
+        const evaluation = await this.evaluateResponse(session, message, true);
+        session.scores.push(evaluation);
         session.followUpPending = false;
-        
+
         if (this.isStageComplete(session)) {
           return await this.handleStageTransition(session);
+        } else {
+          session.currentQuestion++;
+          return await this.getNextQuestion(session);
         }
-        
-        session.currentQuestion++;
-        return await this.getNextQuestion(session);
+      }
+
+      if (session.inQASection) {
+        if (message.toLowerCase() === 'lanjut') {
+          return await this.handleStageTransition(session);
+        }
+        return await this.collectAndAnswerQuestions(session, message);
       }
 
       const evaluation = await this.evaluateResponse(session, message);
@@ -274,10 +387,7 @@ class InterviewService extends BaseService {
 
       const followUpQuestion = await this.generateFollowUpQuestion(session, message);
       session.followUpPending = true;
-      
-      const response = followUpQuestion.replace(/["'"]/g, '');
-      
-      return response;
+      return followUpQuestion;
 
     } catch (error) {
       throw this.handleError(error, 'Process Response');
@@ -332,29 +442,21 @@ Just write the follow-up question directly, nothing else.`;
     const currentStageIndex = CONFIG.interview.stages.indexOf(session.stage);
     
     if (currentStageIndex < CONFIG.interview.stages.length - 1) {
-      session.inQASection = true;
-      this.questionCollector.set(session.userId, []);
-      
-      return `Sebelum kita lanjut ke tahap berikutnya, apakah ada yang ingin Anda tanyakan? 🤔
-
-Anda bisa bertanya tentang:
-• Perusahaan dan budaya kerja
-• Detail pekerjaan dan tanggung jawab
-• Benefit dan pengembangan karir
-• Lokasi dan jadwal kerja
-
-Silakan ajukan pertanyaan Anda, atau ketik "LANJUT" jika tidak ada pertanyaan.`;
+      if (!session.inQASection) {
+        session.inQASection = true;
+        return CONFIG.interview.messages.askQuestions;
+      } else if (session.inQASection) {
+        // Move to next stage when user types "LANJUT"
+        session.inQASection = false;
+        session.stage = CONFIG.interview.stages[currentStageIndex + 1];
+        session.currentQuestion = 0;
+        return await this.getNextQuestion(session);
+      }
     }
     
     if (currentStageIndex === CONFIG.interview.stages.length - 1) {
       return await this.concludeInterview(session);
     }
-
-    session.stage = CONFIG.interview.stages[currentStageIndex + 1];
-    session.currentQuestion = 0;
-    
-    return `Bagus! Mari kita lanjut ke tahap ${session.stage}.
-            ${CONFIG.stages[session.stage].questions[0]}`;
   }
 
   async handleQASection(session) {
@@ -379,7 +481,7 @@ Silakan ajukan pertanyaan Anda, atau ketik "LANJUT" jika tidak ada pertanyaan.
     if (msg.toLowerCase() === 'lanjut') {
       this.clearQuestionCollection(userId);
       session.inQASection = false;
-      session.stage = CONFIG.interview.stages[
+      session.stage = CONFIG.stages[
         CONFIG.interview.stages.indexOf(session.stage) + 1
       ];
       session.currentQuestion = 0;
@@ -460,7 +562,7 @@ Ketik *LANJUT* untuk melanjutkan interview, atau tanyakan hal lain yang ingin ka
     
     this.endSession(session.userId);
     
-    return this.generateFinalMessage(averageScore, result);
+    return this.generateFinalMessage(averageScore, result, session.candidateEmail, session.candidateName);
   }
 
   async generateWelcomeMessage() {
@@ -524,17 +626,47 @@ Ketik *SIAP* untuk memulai interview.`;
     return "Perlu Improvement";
   }
 
-  generateFinalMessage(score, result) {
-    return `
-🎉 Interview Selesai!
+  async generateFinalMessage(score, result, candidateEmail, candidateName) {
+    if (score >= CONFIG.interview.minScoreToPass) {
+      try {
+        const meetingLink = await this.calendarService.scheduleInterview(
+          candidateEmail, 
+          candidateName
+        );
+
+        return `🎉 Interview Selesai!
 
 Hasil evaluasi Anda:
 📊 Nilai Rata-rata: ${score.toFixed(1)}/10
 ✨ Hasil: ${result}
 
-${score >= CONFIG.interview.minScoreToPass ? 
-  "Selamat! Tim HR kami akan menghubungi Anda dalam 2-3 hari kerja." : 
-  "Terima kasih atas partisipasi Anda. Sayangnya, kualifikasi belum sesuai."}
+Selamat! Anda telah lolos tahap awal.
+Jadwal interview lanjutan dengan tim HR telah dikirim ke email ${candidateEmail}
+Link Meeting: ${meetingLink}
+
+Sampai bertemu! 🌟`;
+
+      } catch (error) {
+        console.error('Failed to schedule interview:', error);
+        return `🎉 Interview Selesai!
+
+Hasil evaluasi Anda:
+📊 Nilai Rata-rata: ${score.toFixed(1)}/10
+✨ Hasil: ${result}
+
+Selamat! Tim HR kami akan menghubungi Anda dalam 2-3 hari kerja untuk interview lanjutan.
+
+Semoga sukses! 🌟`;
+      }
+    }
+
+    return `🎉 Interview Selesai!
+
+Hasil evaluasi Anda:
+📊 Nilai Rata-rata: ${score.toFixed(1)}/10
+✨ Hasil: ${result}
+
+Terima kasih atas partisipasi Anda. Sayangnya, kualifikasi belum sesuai.
 
 Semoga sukses! 🌟`;
   }
@@ -549,6 +681,16 @@ Semoga sukses! 🌟`;
 
   getWhatsAppClient() {
     return client;
+  }
+
+  /**
+   * @private
+   * @param {string} email
+   * @returns {boolean}
+   */
+  isValidEmail(email) {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
   }
 }
 
