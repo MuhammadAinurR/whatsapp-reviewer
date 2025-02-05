@@ -98,11 +98,15 @@ Before you start, ensure you have the following:
 4. **Start the Application**
 
    ```bash
-   npm start
+   node server.js
+
+   # For development
+   node --watch server.js
    ```
 
 5. **Connect WhatsApp**
    - Scan the QR code shown in the terminal with WhatsApp
+
    - Wait for the "WhatsApp bot is ready!" message
 
 ---
