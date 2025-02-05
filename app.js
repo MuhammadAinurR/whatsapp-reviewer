@@ -14,7 +14,7 @@ dotenv.config();
 const CONFIG = {
   interview: {
     timeoutMinutes: 30,
-    minScoreToPass: 0, // this is minimum score to pass the interview
+    minScoreToPass: 6, // this is minimum score to pass the interview
     stages: ['initial', 'technical', 'hr'],
     messages: {
       noQuestions: "Baik, mari kita lanjutkan ke tahap berikutnya!",
